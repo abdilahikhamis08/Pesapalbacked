@@ -14,16 +14,18 @@ const allowedOrigins = [
   'https://businessmanagement-802ef.firebaseapp.com'
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true
+  })
+);
 
 app.use(express.json());
 
@@ -41,12 +43,14 @@ const PESAPAL_URLS = {
   sandbox: {
     auth: 'https://cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken',
     order: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest',
-    status: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus'
+    status: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus',
+    redirect: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/Redirect'
   },
   live: {
     auth: 'https://pay.pesapal.com/v3/api/Auth/RequestToken',
     order: 'https://pay.pesapal.com/v3/api/Transactions/SubmitOrderRequest',
-    status: 'https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus'
+    status: 'https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus',
+    redirect: 'https://pay.pesapal.com/v3/api/Transactions/Redirect'
   }
 };
 
@@ -79,14 +83,16 @@ app.post('/api/pesapal/auth', async (req, res) => {
 });
 
 /* =======================
-   2. SUBMIT ORDER
+   2. SUBMIT ORDER (FIXED)
 ======================= */
 app.post('/api/pesapal/order', async (req, res) => {
   try {
     const { accessToken, orderData } = req.body;
 
-    if (!accessToken) {
-      return res.status(400).json({ error: 'Access token is required' });
+    if (!accessToken || !orderData) {
+      return res.status(400).json({
+        error: 'accessToken and orderData are required'
+      });
     }
 
     console.log('💰 Submitting order...');
@@ -99,7 +105,22 @@ app.post('/api/pesapal/order', async (req, res) => {
       }
     });
 
-    res.json(response.data);
+    const orderTrackingId = response.data.order_tracking_id;
+
+    if (!orderTrackingId) {
+      return res.status(400).json({
+        error: 'No order_tracking_id returned from Pesapal',
+        raw: response.data
+      });
+    }
+
+    // 🔑 MANUALLY BUILD REDIRECT URL (IMPORTANT FIX)
+    const redirectUrl = `${urls.redirect}?OrderTrackingId=${orderTrackingId}`;
+
+    res.json({
+      order_tracking_id: orderTrackingId,
+      redirect_url: redirectUrl
+    });
   } catch (error) {
     console.error('❌ Order error:', error.response?.data || error.message);
     res.status(500).json({
