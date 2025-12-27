@@ -6,10 +6,23 @@ const axios = require('axios');
 const app = express();
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://businessmanagement-802ef.web.app',
+  'https://businessmanagement-802ef.firebaseapp.com'
+];
+
 app.use(cors({
-  origin: 'http://localhost:3000', // Your React app
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
+
 app.use(express.json());
 
 // PesaPal URLs
