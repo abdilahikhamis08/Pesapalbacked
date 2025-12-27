@@ -139,7 +139,7 @@ app.post('/api/test', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Proxy server running on http://localhost:${PORT}`);
+  console.log(`🚀 Proxy server running on port ${PORT}`);
   console.log(`📡 Endpoints:`);
   console.log(`   POST http://localhost:${PORT}/api/pesapal/auth`);
   console.log(`   POST http://localhost:${PORT}/api/pesapal/order`);
