@@ -1,3 +1,10 @@
+console.log('ENV CHECK:', {
+  KEY: process.env.PESAPAL_CONSUMER_KEY,
+  SECRET: process.env.PESAPAL_CONSUMER_SECRET,
+  ENV: process.env.PESAPAL_ENV,
+  URL: process.env.REACT_APP_PROXY_URL
+});
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
