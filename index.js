@@ -109,7 +109,7 @@ app.post('/api/pesapal/create-payment', async (req, res) => {
       currency: orderData.currency || 'KES',
       amount: orderData.amount || 10, // 10 KES for testing
       description: orderData.description || 'Premium Business Subscription - 1 Year',
-      callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
+     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: orderData.email || 'customer@example.com',
