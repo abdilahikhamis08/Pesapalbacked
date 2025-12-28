@@ -23,10 +23,10 @@ app.use(express.urlencoded({ extended: true }));
    PESAPAL CONFIGURATION
 ======================= */
 const PESAPAL_CONFIG = {
-  consumer_key: process.env.PESAPAL_CONSUMER_KEY || 'ngW+UEcnDhltUc5fxPfrCD987xMh3Lx8',
-  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET || 'q27RChYs5UkypdcNYKzuUw460Dg=',
-  ipn_id: 'ae222a4b-4039-4d40-915a-daebbe32ff99',
-  environment: 'sandbox'
+  consumer_key: process.env.PESAPAL_CONSUMER_KEY || 'bWKgRK5iJuIVbt8tUWRcKom69Azwo15X',
+  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET || 'Ow+wTi90/8/XWxNlt7N89PZpx/k=',
+  ipn_id: 'b4b7cb67-2838-4678-97d6-daebcc791391',
+  environment: 'live'
 };
 
 const PESAPAL_URLS = {
@@ -106,15 +106,15 @@ app.post('/api/pesapal/create-payment', async (req, res) => {
     // Prepare order data with all required fields
     const paymentOrder = {
       id: orderData.id || `ORDER-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      currency: orderData.currency || 'KES',
-      amount: orderData.amount || 10, // 10 KES for testing
+      currency: orderData.currency || 'USD',
+      amount: orderData.amount || 120, // 10 KES for testing
       description: orderData.description || 'Premium Business Subscription - 1 Year',
      callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: orderData.email || 'customer@example.com',
         phone_number: orderData.phone || '0712345678',
-        country_code: orderData.country_code || 'KE',
+        country_code: orderData.country_code || 'USA',
         first_name: orderData.first_name || 'Customer',
         last_name: orderData.last_name || 'User',
         middle_name: '',
@@ -251,16 +251,16 @@ app.get('/api/pesapal/test', async (req, res) => {
     // Create test order
     const testOrder = {
       id: `TEST-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      currency: 'KES',
-      amount: 1, // 1 KES for testing
+      currency: 'USD',
+      amount: 120, // 1 KES for testing
       description: 'Test Payment - Development',
      callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: 'test@example.com',
         phone_number: '0712345678',
-        country_code: 'KE',
-        first_name: 'Test',
+        country_code: 'USA',
+        first_name: '',
         last_name: 'User',
         middle_name: '',
         line_1: 'Test Address',
