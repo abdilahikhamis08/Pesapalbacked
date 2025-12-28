@@ -254,7 +254,7 @@ app.get('/api/pesapal/test', async (req, res) => {
       currency: 'KES',
       amount: 1, // 1 KES for testing
       description: 'Test Payment - Development',
-      callback_url: `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
+     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: 'test@example.com',
