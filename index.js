@@ -32,16 +32,31 @@ const PESAPAL_URLS = {
     auth: 'https://cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken',
     order: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest',
     status: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus',
-    ipn: 'https://cybqa.pesapal.com/pesapalv3/api/URLSetup/RegisterIPN'
+    ipn: 'https://cybqa.pesapal.com/pesapalv3/api/URLSetup/RegisterIPN',
+    // ✅ CORRECT PAYMENT PAGE URL
+    payment: 'https://cybqa.pesapal.com/pesapaliframe/PesapalIframe3/Index'
+  },
+  live: {
+    auth: 'https://pay.pesapal.com/v3/api/Auth/RequestToken',
+    order: 'https://pay.pesapal.com/v3/api/Transactions/SubmitOrderRequest',
+    status: 'https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus',
+    ipn: 'https://pay.pesapal.com/v3/api/URLSetup/RegisterIPN',
+    payment: 'https://pay.pesapal.com/pesapaliframe/PesapalIframe3/Index'
   }
 };
+
+const getUrls = () =>
+  PESAPAL_CONFIG.environment === 'live'
+    ? PESAPAL_URLS.live
+    : PESAPAL_URLS.sandbox;
 
 /* =======================
    GET AUTH TOKEN
 ======================= */
 async function getPesaPalToken() {
   try {
-    const response = await axios.post(PESAPAL_URLS.sandbox.auth, {
+    const urls = getUrls();
+    const response = await axios.post(urls.auth, {
       consumer_key: PESAPAL_CONFIG.consumer_key,
       consumer_secret: PESAPAL_CONFIG.consumer_secret
     });
@@ -53,20 +68,29 @@ async function getPesaPalToken() {
 }
 
 /* =======================
-   SOLUTION 1: EMBEDDED PAYMENT PAGE
-   (Most reliable for Pesapal sandbox)
+   CREATE ORDER & RETURN PAYMENT URL
 ======================= */
-app.post('/api/pesapal/create-order', async (req, res) => {
+app.post('/api/pesapal/create-payment', async (req, res) => {
   try {
     const { orderData } = req.body;
 
+    if (!orderData) {
+      return res.status(400).json({
+        error: 'orderData is required'
+      });
+    }
+
     console.log('💳 Creating Pesapal order...');
+    const urls = getUrls();
     const token = await getPesaPalToken();
     
+    console.log('✅ Token received');
+
+    // Prepare order data
     const paymentOrder = {
       id: orderData.id || `ORDER-${Date.now()}`,
       currency: orderData.currency || 'KES',
-      amount: orderData.amount || 1,
+      amount: orderData.amount || 10, // 10 KES for testing
       description: orderData.description || 'Payment',
       callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
       notification_id: PESAPAL_CONFIG.ipn_id,
@@ -75,197 +99,62 @@ app.post('/api/pesapal/create-order', async (req, res) => {
         phone_number: orderData.phone || '0712345678',
         country_code: orderData.country_code || 'KE',
         first_name: orderData.first_name || 'Customer',
-        last_name: orderData.last_name || 'User'
+        last_name: orderData.last_name || 'User',
+        middle_name: '',
+        line_1: '',
+        line_2: '',
+        city: '',
+        state: '',
+        postal_code: '',
+        zip_code: ''
       }
     };
 
-    console.log('📦 Order data:', paymentOrder);
+    console.log('📦 Submitting order to Pesapal...');
+    console.log('Order data:', JSON.stringify(paymentOrder, null, 2));
 
-    const orderResponse = await axios.post(PESAPAL_URLS.sandbox.order, paymentOrder, {
+    // Submit order to Pesapal
+    const orderResponse = await axios.post(urls.order, paymentOrder, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       }
     });
 
+    console.log('✅ Order submitted successfully');
+    console.log('Pesapal response:', orderResponse.data);
+
     const orderTrackingId = orderResponse.data.order_tracking_id;
-    
+
     if (!orderTrackingId) {
-      throw new Error('No tracking ID received');
+      console.error('❌ No order_tracking_id in response');
+      return res.status(400).json({
+        error: 'No order_tracking_id returned',
+        raw: orderResponse.data,
+        message: 'Pesapal did not return a tracking ID'
+      });
     }
 
-    console.log('✅ Order created, Tracking ID:', orderTrackingId);
+    // ✅ CORRECT: Build the REAL payment page URL
+    const paymentPageUrl = `${urls.payment}?OrderTrackingId=${orderTrackingId}`;
 
-    // ✅ SOLUTION: Return embedded payment page HTML
-    const embeddedPaymentPage = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Pesapal Payment</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-          }
-          .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 800px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
-          }
-          h1 { 
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 28px;
-          }
-          .info-box {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
-            margin: 20px 0;
-            text-align: left;
-          }
-          .info-box p {
-            margin: 10px 0;
-            color: #666;
-          }
-          .iframe-container {
-            width: 100%;
-            height: 600px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 20px 0;
-          }
-          iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-          }
-          .buttons {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin-top: 20px;
-          }
-          button {
-            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s;
-          }
-          button:hover {
-            transform: translateY(-2px);
-          }
-          .loading {
-            text-align: center;
-            padding: 40px;
-          }
-          .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-          }
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h1>Complete Your Payment</h1>
-          
-          <div class="info-box">
-            <p><strong>Order ID:</strong> ${paymentOrder.id}</p>
-            <p><strong>Amount:</strong> ${paymentOrder.amount} ${paymentOrder.currency}</p>
-            <p><strong>Description:</strong> ${paymentOrder.description}</p>
-            <p><strong>Tracking ID:</strong> ${orderTrackingId}</p>
-          </div>
-          
-          <div class="iframe-container">
-            <div class="loading" id="loading">
-              <div class="loading-spinner"></div>
-              <p>Loading payment page...</p>
-            </div>
-            <iframe 
-              id="pesapalFrame" 
-              src="https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}"
-              onload="document.getElementById('loading').style.display = 'none';"
-              onerror="document.getElementById('loading').innerHTML = '<p style=\"color:red;\">Failed to load payment page. Please try the direct link below.</p>';"
-            ></iframe>
-          </div>
-          
-          <div class="buttons">
-            <button onclick="window.open('https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}', '_blank')">
-              Open in New Tab
-            </button>
-            <button onclick="window.location.href = '${paymentOrder.callback_url}?OrderTrackingId=${orderTrackingId}'">
-              Skip to Callback
-            </button>
-          </div>
-          
-          <p style="margin-top: 20px; color: #666; font-size: 14px;">
-            If the payment page doesn't load above, click "Open in New Tab" or try a different browser.
-          </p>
-        </div>
-        
-        <script>
-          // Auto-focus the iframe for keyboard input
-          setTimeout(() => {
-            const frame = document.getElementById('pesapalFrame');
-            if (frame) {
-              frame.focus();
-            }
-          }, 1000);
-          
-          // Listen for messages from iframe (if Pesapal supports it)
-          window.addEventListener('message', (event) => {
-            console.log('Message from iframe:', event.data);
-            if (event.data.type === 'payment_completed') {
-              window.location.href = '${paymentOrder.callback_url}?OrderTrackingId=${orderTrackingId}';
-            }
-          });
-          
-          // Check if iframe loaded successfully
-          setTimeout(() => {
-            const loading = document.getElementById('loading');
-            const frame = document.getElementById('pesapalFrame');
-            if (loading && frame && !frame.contentWindow) {
-              loading.innerHTML = '<p style="color:orange;">Payment page is taking longer than expected. Please try opening in a new tab.</p>';
-            }
-          }, 5000);
-        </script>
-      </body>
-      </html>
-    `;
+    console.log('🔗 Generated payment URL:', paymentPageUrl);
 
-    // Return the embedded payment page
-    res.send(embeddedPaymentPage);
+    res.json({
+      success: true,
+      order_tracking_id: orderTrackingId,
+      payment_page_url: paymentPageUrl, // ✅ Correct URL
+      merchant_reference: paymentOrder.id,
+      amount: paymentOrder.amount,
+      currency: paymentOrder.currency,
+      message: 'Payment created successfully',
+      note: 'Use payment_page_url to redirect user to Pesapal payment page'
+    });
 
   } catch (error) {
-    console.error('❌ Order creation error:', error.response?.data || error.message);
+    console.error('❌ Payment creation error:', error.response?.data || error.message);
     res.status(500).json({
-      error: 'Failed to create order',
+      error: 'Failed to create payment',
       details: error.response?.data,
       message: error.message
     });
@@ -273,334 +162,262 @@ app.post('/api/pesapal/create-order', async (req, res) => {
 });
 
 /* =======================
-   SOLUTION 2: SIMPLE REDIRECT (Alternative)
+   GET PAYMENT STATUS
 ======================= */
-app.post('/api/pesapal/redirect-to-payment', async (req, res) => {
+app.get('/api/pesapal/status', async (req, res) => {
   try {
-    const { orderData } = req.body;
-    
-    const token = await getPesaPalToken();
-    
-    const paymentOrder = {
-      id: orderData.id || `ORDER-${Date.now()}`,
-      currency: orderData.currency || 'KES',
-      amount: orderData.amount || 1,
-      description: orderData.description || 'Payment',
-      callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
-      notification_id: PESAPAL_CONFIG.ipn_id,
-      billing_address: {
-        email_address: orderData.email || 'customer@example.com',
-        phone_number: orderData.phone || '0712345678',
-        country_code: orderData.country_code || 'KE',
-        first_name: orderData.first_name || 'Customer',
-        last_name: orderData.last_name || 'User'
-      }
-    };
+    const { orderTrackingId } = req.query;
 
-    const orderResponse = await axios.post(PESAPAL_URLS.sandbox.order, paymentOrder, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const orderTrackingId = orderResponse.data.order_tracking_id;
-    
     if (!orderTrackingId) {
-      throw new Error('No tracking ID received');
+      return res.status(400).json({
+        error: 'orderTrackingId is required'
+      });
     }
 
-    // Redirect directly to Pesapal
-    const pesapalUrl = `https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}`;
-    res.redirect(pesapalUrl);
+    const urls = getUrls();
+    const token = await getPesaPalToken();
 
+    const response = await axios.get(
+      `${urls.status}?orderTrackingId=${orderTrackingId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      ...response.data
+    });
   } catch (error) {
-    console.error('❌ Redirect error:', error.message);
-    res.status(500).send(`
-      <!DOCTYPE html>
-      <html>
-      <body style="font-family: Arial, sans-serif; padding: 40px; text-align: center;">
-        <h1 style="color: #f44336;">Payment Error</h1>
-        <p>${error.message}</p>
-        <button onclick="window.history.back()" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
-          Go Back
-        </button>
-      </body>
-      </html>
-    `);
+    console.error('❌ Status error:', error.response?.data || error.message);
+    res.status(500).json({
+      error: 'Failed to check status',
+      details: error.response?.data
+    });
   }
 });
 
 /* =======================
-   SOLUTION 3: MANUAL PAYMENT INSTRUCTIONS
-   (For when Pesapal sandbox is completely down)
+   DIRECT TEST ENDPOINT
 ======================= */
-app.post('/api/pesapal/manual-payment', async (req, res) => {
+app.get('/api/pesapal/test', async (req, res) => {
   try {
-    const { orderData } = req.body;
-    
+    const urls = getUrls();
     const token = await getPesaPalToken();
     
-    const paymentOrder = {
-      id: orderData.id || `ORDER-${Date.now()}`,
-      currency: orderData.currency || 'KES',
-      amount: orderData.amount || 1,
-      description: orderData.description || 'Payment',
-      callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
+    // Create test order
+    const testOrder = {
+      id: `TEST-${Date.now()}`,
+      currency: 'KES',
+      amount: 1, // 1 KES for testing
+      description: 'Test Payment',
+      callback_url: `${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`,
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
-        email_address: orderData.email || 'customer@example.com',
-        phone_number: orderData.phone || '0712345678',
-        country_code: orderData.country_code || 'KE',
-        first_name: orderData.first_name || 'Customer',
-        last_name: orderData.last_name || 'User'
+        email_address: 'test@example.com',
+        phone_number: '0712345678',
+        country_code: 'KE',
+        first_name: 'Test',
+        last_name: 'User'
       }
     };
-
-    const orderResponse = await axios.post(PESAPAL_URLS.sandbox.order, paymentOrder, {
+    
+    // Submit order
+    const orderResponse = await axios.post(urls.order, testOrder, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       }
     });
-
+    
     const orderTrackingId = orderResponse.data.order_tracking_id;
     
     if (!orderTrackingId) {
       throw new Error('No tracking ID received');
     }
-
-    // Return manual payment instructions
-    const manualPage = `
+    
+    // Build payment URL
+    const paymentPageUrl = `${urls.payment}?OrderTrackingId=${orderTrackingId}`;
+    
+    // Return HTML page for testing
+    const html = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Manual Payment Instructions</title>
+        <title>Pesapal Payment Test</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
-          .card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-          h1 { color: #333; margin-bottom: 20px; }
-          .step { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
-          .url-box { background: #e9ecef; padding: 15px; border-radius: 5px; margin: 10px 0; word-break: break-all; }
-          button { background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; margin: 5px; }
-          .test-credentials { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          body {
+            font-family: Arial, sans-serif;
+            padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+          }
+          .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          }
+          h1 {
+            color: white;
+            margin-bottom: 20px;
+          }
+          .info-box {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+          }
+          .url-box {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            word-break: break-all;
+            font-family: monospace;
+          }
+          .button {
+            display: inline-block;
+            background: #4CAF50;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 10px 5px;
+            transition: transform 0.2s;
+          }
+          .button:hover {
+            transform: translateY(-2px);
+            background: #45a049;
+          }
+          .iframe-container {
+            width: 100%;
+            height: 600px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            margin: 20px 0;
+            overflow: hidden;
+          }
+          iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+          }
         </style>
       </head>
       <body>
-        <div class="card">
-          <h1>Manual Payment Required</h1>
-          <p>The Pesapal payment page is currently unavailable. Please follow these steps:</p>
+        <div class="container">
+          <h1>✅ Pesapal Payment Test</h1>
+          <p>Order created successfully! Here's your payment page:</p>
           
-          <div class="step">
-            <h3>Step 1: Copy this Payment URL</h3>
-            <div class="url-box">
-              https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}
-            </div>
-            <button onclick="navigator.clipboard.writeText('https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}')">
+          <div class="info-box">
+            <h3>Order Details:</h3>
+            <p><strong>Tracking ID:</strong> ${orderTrackingId}</p>
+            <p><strong>Reference:</strong> ${testOrder.id}</p>
+            <p><strong>Amount:</strong> ${testOrder.amount} ${testOrder.currency}</p>
+            <p><strong>Description:</strong> ${testOrder.description}</p>
+          </div>
+          
+          <div class="info-box">
+            <h3>Payment URL:</h3>
+            <div class="url-box">${paymentPageUrl}</div>
+            
+            <a href="${paymentPageUrl}" target="_blank" class="button">
+              Open in New Tab
+            </a>
+            
+            <button onclick="document.getElementById('paymentFrame').src = '${paymentPageUrl}'" class="button" style="background: #2196F3;">
+              Load in Iframe
+            </button>
+            
+            <button onclick="navigator.clipboard.writeText('${paymentPageUrl}')" class="button" style="background: #FF9800;">
               Copy URL
             </button>
-            <button onclick="window.open('https://cybqa.pesapal.com/pesapalv3/ProcessPayment?OrderTrackingId=${orderTrackingId}', '_blank')">
-              Open in New Tab
-            </button>
           </div>
           
-          <div class="step">
-            <h3>Step 2: If page is blank/white, try:</h3>
-            <ul>
-              <li>Enable pop-ups in your browser</li>
-              <li>Try a different browser (Chrome, Firefox, Edge)</li>
-              <li>Try Incognito/Private mode</li>
-              <li>Disable ad-blockers</li>
-            </ul>
+          <div class="iframe-container">
+            <iframe 
+              id="paymentFrame" 
+              src="${paymentPageUrl}"
+              title="Pesapal Payment"
+              allow="payment *"
+            >
+              Your browser does not support iframes.
+            </iframe>
           </div>
           
-          <div class="test-credentials">
-            <h3>Test Credentials (Sandbox):</h3>
+          <div class="info-box">
+            <h3>Test Credentials:</h3>
             <ul>
               <li><strong>Card:</strong> 4242 4242 4242 4242</li>
-              <li><strong>Expiry:</strong> Any future date</li>
-              <li><strong>CVV:</strong> Any 3 digits</li>
-              <li><strong>Amount:</strong> ${paymentOrder.amount} KES</li>
+              <li><strong>Expiry:</strong> Any future date (e.g., 12/30)</li>
+              <li><strong>CVV:</strong> Any 3 digits (e.g., 123)</li>
+              <li><strong>Amount:</strong> ${testOrder.amount} KES</li>
+              <li><strong>Phone:</strong> 0712345678 (for mobile money)</li>
             </ul>
-          </div>
-          
-          <div class="step">
-            <h3>Step 3: After Payment</h3>
-            <p>After completing payment on Pesapal, you'll be redirected back to:</p>
-            <div class="url-box">${paymentOrder.callback_url}</div>
-            <p>Or you can manually go to: <a href="${paymentOrder.callback_url}?OrderTrackingId=${orderTrackingId}">Callback URL</a></p>
-          </div>
-          
-          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6;">
-            <p><strong>Order Details:</strong></p>
-            <p>Tracking ID: <strong>${orderTrackingId}</strong></p>
-            <p>Reference: <strong>${paymentOrder.id}</strong></p>
-            <p>Amount: <strong>${paymentOrder.amount} ${paymentOrder.currency}</strong></p>
+            <p><strong>Note:</strong> After payment, you'll be redirected to the callback URL.</p>
           </div>
         </div>
+        
+        <script>
+          console.log('Payment Test Loaded');
+          console.log('Tracking ID:', '${orderTrackingId}');
+          console.log('Payment URL:', '${paymentPageUrl}');
+          
+          // Auto-focus iframe
+          setTimeout(() => {
+            const frame = document.getElementById('paymentFrame');
+            if (frame) {
+              frame.focus();
+            }
+          }, 1000);
+        </script>
       </body>
       </html>
     `;
     
-    res.send(manualPage);
-
+    res.send(html);
+    
   } catch (error) {
-    console.error('❌ Manual payment error:', error.message);
+    console.error('❌ Test error:', error.response?.data || error.message);
     res.status(500).json({
-      error: 'Failed to create manual payment',
-      details: error.message
+      error: 'Test failed',
+      details: error.response?.data
     });
   }
 });
 
 /* =======================
-   SIMPLE TEST ENDPOINT
-======================= */
-app.get('/api/pesapal/quick-test', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Pesapal Quick Test</title>
-      <style>
-        body { font-family: Arial; padding: 40px; text-align: center; }
-        .test-box { margin: 20px; padding: 20px; border: 2px solid #667eea; border-radius: 10px; }
-        button { background: #667eea; color: white; border: none; padding: 15px 30px; margin: 10px; border-radius: 5px; cursor: pointer; }
-      </style>
-    </head>
-    <body>
-      <h1>Pesapal Payment Test</h1>
-      
-      <div class="test-box">
-        <h3>Option 1: Embedded Payment</h3>
-        <p>Try the embedded payment page</p>
-        <button onclick="testEmbedded()">Test Embedded Payment</button>
-      </div>
-      
-      <div class="test-box">
-        <h3>Option 2: Direct Redirect</h3>
-        <p>Direct redirect to Pesapal</p>
-        <button onclick="testRedirect()">Test Direct Redirect</button>
-      </div>
-      
-      <div class="test-box">
-        <h3>Option 3: Manual Instructions</h3>
-        <p>Get manual payment instructions</p>
-        <button onclick="testManual()">Test Manual Payment</button>
-      </div>
-      
-      <script>
-        async function testEmbedded() {
-          const response = await fetch('/api/pesapal/create-order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              orderData: {
-                amount: 1,
-                currency: 'KES',
-                description: 'Test Payment'
-              }
-            })
-          });
-          const html = await response.text();
-          document.write(html);
-        }
-        
-        async function testRedirect() {
-          const response = await fetch('/api/pesapal/redirect-to-payment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              orderData: {
-                amount: 1,
-                currency: 'KES',
-                description: 'Test Payment'
-              }
-            })
-          });
-          if (response.redirected) {
-            window.location.href = response.url;
-          }
-        }
-        
-        async function testManual() {
-          const response = await fetch('/api/pesapal/manual-payment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              orderData: {
-                amount: 1,
-                currency: 'KES',
-                description: 'Test Payment'
-              }
-            })
-          });
-          const html = await response.text();
-          document.write(html);
-        }
-      </script>
-    </body>
-    </html>
-  `);
-});
-
-/* =======================
-   CHECK PESAPAL STATUS
-======================= */
-app.get('/api/pesapal/status-check', async (req, res) => {
-  try {
-    // Test if Pesapal is reachable
-    const testResponse = await axios.get('https://cybqa.pesapal.com/pesapalv3/ProcessPayment', {
-      timeout: 10000
-    }).catch(() => null);
-    
-    // Test API connectivity
-    const token = await getPesaPalToken();
-    
-    res.json({
-      pesapal_status: testResponse ? 'reachable' : 'unreachable',
-      api_status: token ? 'working' : 'failed',
-      timestamp: new Date().toISOString(),
-      environment: PESAPAL_CONFIG.environment,
-      ipn_id: PESAPAL_CONFIG.ipn_id,
-      note: 'Pesapal sandbox is often unstable. Try different approaches if one fails.'
-    });
-    
-  } catch (error) {
-    res.json({
-      pesapal_status: 'error',
-      api_status: 'failed',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/* =======================
-   IPN & CALLBACK ENDPOINTS
+   IPN CALLBACK
 ======================= */
 app.post('/api/pesapal/ipn', (req, res) => {
-  console.log('📩 IPN received:', req.body);
+  console.log('📩 IPN received:', JSON.stringify(req.body, null, 2));
   res.status(200).json({ message: 'IPN received' });
 });
 
+/* =======================
+   PAYMENT CALLBACK
+======================= */
 app.get('/payment-callback', (req, res) => {
-  const { OrderTrackingId } = req.query;
-  console.log('🔙 Callback received:', OrderTrackingId);
+  const { OrderTrackingId, OrderMerchantReference } = req.query;
   
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <body style="font-family: Arial; padding: 40px; text-align: center;">
-      <h1 style="color: #4CAF50;">Payment Received!</h1>
-      <p>Tracking ID: ${OrderTrackingId || 'Unknown'}</p>
-      <p>Thank you for your payment. Your subscription is being activated.</p>
-      <button onclick="window.close()" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
-        Close Window
-      </button>
-    </body>
-    </html>
-  `);
+  console.log('🔙 Payment callback received:', {
+    OrderTrackingId,
+    OrderMerchantReference,
+    timestamp: new Date().toISOString()
+  });
+
+  // Redirect to frontend
+  const frontendUrl = `https://businessmanagement-802ef.web.app/payment-result?trackingId=${OrderTrackingId}&reference=${OrderMerchantReference}`;
+  
+  res.redirect(frontendUrl);
 });
 
 /* =======================
@@ -611,14 +428,15 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     service: 'pesapal-proxy',
     timestamp: new Date().toISOString(),
+    environment: PESAPAL_CONFIG.environment,
+    ipn_id: PESAPAL_CONFIG.ipn_id,
     endpoints: {
-      create_order: 'POST /api/pesapal/create-order',
-      redirect: 'POST /api/pesapal/redirect-to-payment',
-      manual: 'POST /api/pesapal/manual-payment',
-      quick_test: 'GET /api/pesapal/quick-test',
-      status: 'GET /api/pesapal/status-check',
+      create_payment: 'POST /api/pesapal/create-payment',
+      status: 'GET /api/pesapal/status',
+      test: 'GET /api/pesapal/test',
       callback: 'GET /payment-callback'
-    }
+    },
+    note: 'Using correct Pesapal payment URL: /pesapaliframe/PesapalIframe3/Index'
   });
 });
 
@@ -629,9 +447,10 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌐 Environment: ${PESAPAL_CONFIG.environment}`);
-  console.log('\n📞 Test Endpoints:');
-  console.log(`   Quick Test: http://localhost:${PORT}/api/pesapal/quick-test`);
-  console.log(`   Status Check: http://localhost:${PORT}/api/pesapal/status-check`);
-  console.log(`   Health: http://localhost:${PORT}/api/health`);
-  console.log('\n💡 Tip: Pesapal sandbox is often unstable. Use the embedded payment page approach.');
+  console.log(`📋 IPN ID: ${PESAPAL_CONFIG.ipn_id}`);
+  console.log('\n📞 Endpoints:');
+  console.log(`   Create Payment: POST /api/pesapal/create-payment`);
+  console.log(`   Test Payment: GET /api/pesapal/test`);
+  console.log(`   Health: GET /api/health`);
+  console.log('\n✅ Server ready! Using correct Pesapal payment URL.');
 });
