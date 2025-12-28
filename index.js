@@ -6,149 +6,126 @@ const axios = require('axios');
 const app = express();
 
 /* =======================
-   CORS CONFIG - SIMPLE
+   CORS CONFIG
 ======================= */
-app.use(cors({
-  origin: ['http://localhost:3000', 'https://businessmanagement-802ef.web.app'],
-  credentials: true
-}));
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://businessmanagement-802ef.web.app',
+  'https://businessmanagement-802ef.firebaseapp.com'
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true
+  })
+);
 
 app.use(express.json());
 
 /* =======================
-   ROOT ROUTE
+   ROOT ROUTE (IMPORTANT)
 ======================= */
 app.get('/', (req, res) => {
-  res.send('🚀 PesaPal backend is running');
+  res.send('🚀 Pesapal backend is running');
 });
 
 /* =======================
-   PESAPAL CONFIG
+   PESAPAL URLS
 ======================= */
-const PESAPAL_CONFIG = {
-  // Use the EXACT URLs from your working Kodular setup
-  authUrl: 'https://cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken',
-  orderUrl: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest',
-  statusUrl: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus',
-  
-  // Use the EXACT credentials from your blocks.png
-  consumerKey: 'ngW+U:EnDhtUc5kPfrCD987xMh3Lx8',
-  consumerSecret: 'q2/RChYSJUkypdcNYKzuUw460Dg='
+const PESAPAL_URLS = {
+  sandbox: {
+    auth: 'https://cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken',
+    order: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest',
+    status: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus',
+    redirect: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/Redirect'
+  },
+  live: {
+    auth: 'https://pay.pesapal.com/v3/api/Auth/RequestToken',
+    order: 'https://pay.pesapal.com/v3/api/Transactions/SubmitOrderRequest',
+    status: 'https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus',
+    redirect: 'https://pay.pesapal.com/v3/api/Transactions/Redirect'
+  }
 };
 
-console.log('🔧 PesaPal Configuration Loaded');
+const getUrls = () =>
+  process.env.PESAPAL_ENV === 'live'
+    ? PESAPAL_URLS.live
+    : PESAPAL_URLS.sandbox;
 
 /* =======================
-   1. AUTH TOKEN - SIMPLE AND WORKING
+   1. AUTH TOKEN
 ======================= */
 app.post('/api/pesapal/auth', async (req, res) => {
-  console.log('🔐 Getting PesaPal token...');
-  
   try {
-    // Make the EXACT same request as your Kodular blocks
-    const response = await axios.post(
-      PESAPAL_CONFIG.authUrl,
-      {
-        consumer_key: PESAPAL_CONFIG.consumerKey,
-        consumer_secret: PESAPAL_CONFIG.consumerSecret
-      },
-      {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    console.log('🔐 Getting Pesapal token...');
+    const urls = getUrls();
 
-    console.log('✅ Auth response received');
-    
-    // Check if token exists
-    if (!response.data || !response.data.token) {
-      console.error('❌ No token in response:', response.data);
-      return res.status(400).json({
-        error: 'No token in response',
-        details: response.data
-      });
-    }
-
-    console.log('✅ Token obtained successfully');
-    
-    // Return the EXACT same structure as your Kodular blocks expected
-    res.json({
-      success: true,
-      token: response.data.token,
-      expires_in: response.data.expires_in,
-      status: response.data.status,
-      message: 'Authentication successful'
+    const response = await axios.post(urls.auth, {
+      consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+      consumer_secret: process.env.PESAPAL_CONSUMER_SECRET
     });
-    
+
+    res.json(response.data);
   } catch (error) {
     console.error('❌ Auth error:', error.response?.data || error.message);
-    
-    // Return the error in the same format
     res.status(500).json({
-      error: 'Authentication failed',
-      details: error.response?.data || error.message,
-      message: 'Failed to authenticate with PesaPal'
+      error: 'Failed to authenticate with Pesapal',
+      details: error.response?.data
     });
   }
 });
 
 /* =======================
-   2. SUBMIT ORDER
+   2. SUBMIT ORDER (FIXED)
 ======================= */
 app.post('/api/pesapal/order', async (req, res) => {
   try {
     const { accessToken, orderData } = req.body;
 
-    console.log('💰 Submitting order with token:', accessToken ? 'Present' : 'Missing');
-
-    if (!accessToken) {
+    if (!accessToken || !orderData) {
       return res.status(400).json({
-        error: 'Access token is required',
-        message: 'Please authenticate first'
+        error: 'accessToken and orderData are required'
       });
     }
 
-    if (!orderData) {
-      return res.status(400).json({
-        error: 'Order data is required'
-      });
-    }
+    console.log('💰 Submitting order...');
+    const urls = getUrls();
 
-    // Log order data for debugging
-    console.log('📦 Order data:', {
-      id: orderData.id,
-      amount: orderData.amount,
-      currency: orderData.currency,
-      description: orderData.description
+    const response = await axios.post(urls.order, orderData, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
     });
 
-    // Make the request to PesaPal
-    const response = await axios.post(
-      PESAPAL_CONFIG.orderUrl,
-      orderData,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    );
+    const orderTrackingId = response.data.order_tracking_id;
 
-    console.log('✅ Order response:', response.data);
+    if (!orderTrackingId) {
+      return res.status(400).json({
+        error: 'No order_tracking_id returned from Pesapal',
+        raw: response.data
+      });
+    }
 
-    // Return the response as-is (matching Kodular blocks)
-    res.json(response.data);
+    // 🔑 MANUALLY BUILD REDIRECT URL (IMPORTANT FIX)
+    const redirectUrl = `${urls.redirect}?OrderTrackingId=${orderTrackingId}`;
 
+    res.json({
+      order_tracking_id: orderTrackingId,
+      redirect_url: redirectUrl
+    });
   } catch (error) {
     console.error('❌ Order error:', error.response?.data || error.message);
-    
     res.status(500).json({
       error: 'Failed to submit order',
-      details: error.response?.data || error.message,
-      message: 'Order submission failed'
+      details: error.response?.data
     });
   }
 });
@@ -160,40 +137,35 @@ app.get('/api/pesapal/status', async (req, res) => {
   try {
     const { accessToken, orderTrackingId } = req.query;
 
-    console.log('🔍 Checking status for:', orderTrackingId);
-
     if (!accessToken || !orderTrackingId) {
       return res.status(400).json({
         error: 'accessToken and orderTrackingId are required'
       });
     }
 
+    const urls = getUrls();
+
     const response = await axios.get(
-      `${PESAPAL_CONFIG.statusUrl}?orderTrackingId=${orderTrackingId}`,
+      `${urls.status}?orderTrackingId=${orderTrackingId}`,
       {
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json'
+          Authorization: `Bearer ${accessToken}`
         }
       }
     );
 
-    console.log('📊 Status result:', response.data.payment_status_description);
-
     res.json(response.data);
-
   } catch (error) {
     console.error('❌ Status error:', error.response?.data || error.message);
-    
     res.status(500).json({
       error: 'Failed to check status',
-      details: error.response?.data || error.message
+      details: error.response?.data
     });
   }
 });
 
 /* =======================
-   4. HEALTH CHECK
+   HEALTH CHECK
 ======================= */
 app.get('/api/health', (req, res) => {
   res.json({
@@ -204,13 +176,12 @@ app.get('/api/health', (req, res) => {
 });
 
 /* =======================
-   5. TEST ENDPOINT
+   TEST ENDPOINT
 ======================= */
 app.post('/api/test', (req, res) => {
-  console.log('🧪 Test endpoint called');
   res.json({
     message: 'Backend is working!',
-    received: req.body,
+    data: req.body,
     timestamp: new Date().toISOString()
   });
 });
@@ -220,22 +191,5 @@ app.post('/api/test', (req, res) => {
 ======================= */
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`
-==================================
-🚀 PesaPal Proxy Server
-==================================
-📍 Port: ${PORT}
-🔗 Auth URL: ${PESAPAL_CONFIG.authUrl}
-💰 Order URL: ${PESAPAL_CONFIG.orderUrl}
-📊 Status URL: ${PESAPAL_CONFIG.statusUrl}
-⏰ Started: ${new Date().toLocaleString()}
-
-📋 Endpoints:
-✅ POST /api/pesapal/auth
-✅ POST /api/pesapal/order  
-✅ GET  /api/pesapal/status
-✅ GET  /api/health
-✅ POST /api/test
-==================================
-  `);
+  console.log(`🚀 Pesapal proxy running on port ${PORT}`);
 });
