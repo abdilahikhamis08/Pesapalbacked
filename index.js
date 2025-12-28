@@ -11,7 +11,8 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'https://businessmanagement-802ef.web.app',
-  'https://businessmanagement-802ef.firebaseapp.com'
+  'https://businessmanagement-802ef.firebaseapp.com',
+  'https://cybqa.pesapal.com' // Allow Pesapal sandbox
 ];
 
 app.use(
@@ -45,7 +46,7 @@ const PESAPAL_URLS = {
     order: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest',
     status: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/GetTransactionStatus',
     redirect: 'https://cybqa.pesapal.com/pesapalv3/api/Transactions/Redirect',
-    ipn: 'https://cybqa.pesapal.com/pesapalv3/api/URLSetup/RegisterIPN' // For IPN registration
+    ipn: 'https://cybqa.pesapal.com/pesapalv3/api/URLSetup/RegisterIPN'
   },
   live: {
     auth: 'https://pay.pesapal.com/v3/api/Auth/RequestToken',
@@ -85,11 +86,11 @@ app.post('/api/pesapal/auth', async (req, res) => {
 });
 
 /* =======================
-   2. REGISTER IPN URL (NEW - DO THIS FIRST)
+   2. REGISTER IPN URL
 ======================= */
 app.post('/api/pesapal/register-ipn', async (req, res) => {
   try {
-    const { accessToken } = req.body;
+    const { accessToken, ipnUrl } = req.body;
     
     if (!accessToken) {
       return res.status(400).json({ error: 'accessToken is required' });
@@ -99,9 +100,11 @@ app.post('/api/pesapal/register-ipn', async (req, res) => {
     const urls = getUrls();
 
     const ipnData = {
-      url: process.env.PESAPAL_IPN_URL || 'https://pesapalbacked.onrender.com/api/pesapal/ipn',
-      ipn_notification_type: 'POST' // Can be 'GET' or 'POST'
+      url: ipnUrl || process.env.PESAPAL_IPN_URL || 'https://pesapalbacked.onrender.com/api/pesapal/ipn',
+      ipn_notification_type: 'POST'
     };
+
+    console.log('Registering IPN with:', ipnData);
 
     const response = await axios.post(urls.ipn, ipnData, {
       headers: {
@@ -122,7 +125,7 @@ app.post('/api/pesapal/register-ipn', async (req, res) => {
 });
 
 /* =======================
-   3. SUBMIT ORDER (UPDATED WITH IPN)
+   3. SUBMIT ORDER (FIXED)
 ======================= */
 app.post('/api/pesapal/order', async (req, res) => {
   try {
@@ -134,24 +137,36 @@ app.post('/api/pesapal/order', async (req, res) => {
       });
     }
 
-    console.log('💰 Submitting order with IPN...');
+    console.log('💰 Submitting order...');
+    console.log('Order data:', JSON.stringify(orderData, null, 2));
+    
     const urls = getUrls();
 
-    // Add IPN configuration to order data
-    const orderWithIPN = {
+    // Validate required fields
+    if (!orderData.amount || !orderData.currency || !orderData.description) {
+      return res.status(400).json({
+        error: 'Missing required fields: amount, currency, description'
+      });
+    }
+
+    // Ensure IPN fields are included
+    const enhancedOrderData = {
       ...orderData,
-      // 🔴 CRITICAL: Add these IPN fields
-      callback_url: process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com',
-      notification_id: process.env.PESAPAL_IPN_ID, // This must be registered first
+      callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL}/payment-callback`,
+      notification_id: orderData.notification_id || process.env.PESAPAL_IPN_ID,
       ipn_notification_type: 'POST'
     };
 
-    const response = await axios.post(urls.order, orderWithIPN, {
+    console.log('Enhanced order data:', JSON.stringify(enhancedOrderData, null, 2));
+
+    const response = await axios.post(urls.order, enhancedOrderData, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       }
     });
+
+    console.log('Pesapal response:', response.data);
 
     const orderTrackingId = response.data.order_tracking_id;
 
@@ -162,69 +177,220 @@ app.post('/api/pesapal/order', async (req, res) => {
       });
     }
 
-    // Build redirect URL
-    const redirectUrl = `${urls.redirect}?OrderTrackingId=${orderTrackingId}`;
-
+    // Return tracking ID only - frontend will build redirect URL
     res.json({
+      success: true,
       order_tracking_id: orderTrackingId,
-      redirect_url: redirectUrl,
       message: 'Order submitted successfully'
     });
   } catch (error) {
     console.error('❌ Order error:', error.response?.data || error.message);
     res.status(500).json({
       error: 'Failed to submit order',
-      details: error.response?.data
+      details: error.response?.data,
+      message: error.message
     });
   }
 });
 
 /* =======================
-   4. IPN CALLBACK ENDPOINT (NEW)
+   4. GET PAYMENT URL (NEW)
 ======================= */
-app.post('/api/pesapal/ipn', async (req, res) => {
+app.get('/api/pesapal/payment-url', (req, res) => {
   try {
-    console.log('📩 IPN Callback received:', req.body);
-    
-    // Pesapal will send payment notifications here
-    const { OrderTrackingId, OrderNotificationType, OrderMerchantReference } = req.body;
-    
-    // Here you should update your database with payment status
-    console.log(`Payment update for Order ${OrderMerchantReference}: ${OrderNotificationType}`);
-    
-    // Always return 200 OK to Pesapal
-    res.status(200).json({ message: 'IPN received successfully' });
-  } catch (error) {
-    console.error('❌ IPN processing error:', error);
-    res.status(200).json({ error: 'Failed to process IPN' });
-  }
-});
+    const { orderTrackingId } = req.query;
 
-/* =======================
-   5. CHECK STATUS
-======================= */
-app.get('/api/pesapal/status', async (req, res) => {
-  try {
-    const { accessToken, orderTrackingId } = req.query;
-
-    if (!accessToken || !orderTrackingId) {
+    if (!orderTrackingId) {
       return res.status(400).json({
-        error: 'accessToken and orderTrackingId are required'
+        error: 'orderTrackingId is required'
       });
     }
 
     const urls = getUrls();
+    
+    // Build the Pesapal payment URL
+    const paymentUrl = `${urls.redirect}?OrderTrackingId=${orderTrackingId}`;
+
+    res.json({
+      success: true,
+      payment_url: paymentUrl,
+      message: 'Payment URL generated'
+    });
+  } catch (error) {
+    console.error('❌ Payment URL error:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate payment URL',
+      details: error.message
+    });
+  }
+});
+
+/* =======================
+   5. COMPLETE PAYMENT FLOW (ALL-IN-ONE)
+======================= */
+app.post('/api/pesapal/initiate-payment', async (req, res) => {
+  try {
+    const { orderData } = req.body;
+
+    if (!orderData) {
+      return res.status(400).json({
+        error: 'orderData is required'
+      });
+    }
+
+    console.log('🔄 Initiating payment flow...');
+    const urls = getUrls();
+
+    // 1. Get authentication token
+    const authResponse = await axios.post(urls.auth, {
+      consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+      consumer_secret: process.env.PESAPAL_CONSUMER_SECRET
+    });
+    
+    const token = authResponse.data.token;
+    console.log('Token received:', token ? 'Yes' : 'No');
+
+    if (!token) {
+      throw new Error('No token received from Pesapal');
+    }
+
+    // 2. Prepare order data with IPN
+    const enhancedOrderData = {
+      id: orderData.id || `ORDER-${Date.now()}`,
+      currency: orderData.currency || 'KES',
+      amount: orderData.amount,
+      description: orderData.description,
+      callback_url: orderData.callback_url || `${process.env.REACT_APP_PROXY_URL}/payment-callback`,
+      notification_id: orderData.notification_id || process.env.PESAPAL_IPN_ID,
+      ipn_notification_type: 'POST',
+      billing_address: orderData.billing_address || {
+        email_address: orderData.email || 'customer@example.com',
+        phone_number: orderData.phone || '0712345678',
+        country_code: orderData.country_code || 'KE',
+        first_name: orderData.first_name || 'Customer',
+        last_name: orderData.last_name || 'Name',
+        middle_name: '',
+        line_1: '',
+        line_2: '',
+        city: '',
+        state: '',
+        postal_code: '',
+        zip_code: ''
+      }
+    };
+
+    console.log('Submitting order with data:', JSON.stringify(enhancedOrderData, null, 2));
+
+    // 3. Submit order
+    const orderResponse = await axios.post(urls.order, enhancedOrderData, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log('Order response:', orderResponse.data);
+
+    const orderTrackingId = orderResponse.data.order_tracking_id;
+
+    if (!orderTrackingId) {
+      return res.status(400).json({
+        error: 'No order_tracking_id returned from Pesapal',
+        raw: orderResponse.data
+      });
+    }
+
+    // 4. Build payment URL
+    const paymentUrl = `${urls.redirect}?OrderTrackingId=${orderTrackingId}`;
+
+    res.json({
+      success: true,
+      order_tracking_id: orderTrackingId,
+      payment_url: paymentUrl,
+      message: 'Payment initiated successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Payment initiation error:', error.response?.data || error.message);
+    res.status(500).json({
+      error: 'Payment initiation failed',
+      details: error.response?.data,
+      message: error.message
+    });
+  }
+});
+
+/* =======================
+   6. IPN CALLBACK ENDPOINT
+======================= */
+app.post('/api/pesapal/ipn', (req, res) => {
+  try {
+    console.log('📩 IPN Callback received:', req.body);
+    
+    const { 
+      OrderTrackingId, 
+      OrderNotificationType, 
+      OrderMerchantReference,
+      OrderPaymentStatus 
+    } = req.body;
+    
+    console.log(`💳 Payment Update: 
+      Order: ${OrderMerchantReference}
+      Tracking ID: ${OrderTrackingId}
+      Status: ${OrderNotificationType}
+      Payment Status: ${OrderPaymentStatus}`);
+    
+    // TODO: Update your database here
+    
+    // Always return 200 OK to Pesapal
+    res.status(200).json({ 
+      message: 'IPN received successfully',
+      status: 'OK'
+    });
+  } catch (error) {
+    console.error('❌ IPN processing error:', error);
+    res.status(200).json({ 
+      error: 'Failed to process IPN',
+      status: 'ERROR'
+    });
+  }
+});
+
+/* =======================
+   7. CHECK STATUS
+======================= */
+app.get('/api/pesapal/status', async (req, res) => {
+  try {
+    const { orderTrackingId } = req.query;
+
+    if (!orderTrackingId) {
+      return res.status(400).json({
+        error: 'orderTrackingId is required'
+      });
+    }
+
+    // Get token first
+    const urls = getUrls();
+    const authResponse = await axios.post(urls.auth, {
+      consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+      consumer_secret: process.env.PESAPAL_CONSUMER_SECRET
+    });
+    
+    const token = authResponse.data.token;
 
     const response = await axios.get(
       `${urls.status}?orderTrackingId=${orderTrackingId}`,
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`
+          Authorization: `Bearer ${token}`
         }
       }
     );
 
-    res.json(response.data);
+    res.json({
+      success: true,
+      ...response.data
+    });
   } catch (error) {
     console.error('❌ Status error:', error.response?.data || error.message);
     res.status(500).json({
@@ -235,13 +401,62 @@ app.get('/api/pesapal/status', async (req, res) => {
 });
 
 /* =======================
-   REMAINING ENDPOINTS (unchanged)
+   8. PAYMENT CALLBACK (For user redirect)
+======================= */
+app.get('/payment-callback', (req, res) => {
+  const { OrderTrackingId, OrderMerchantReference } = req.query;
+  
+  console.log('🔙 Payment callback received:', {
+    OrderTrackingId,
+    OrderMerchantReference
+  });
+
+  // Redirect to your frontend with payment details
+  const frontendUrl = `https://businessmanagement-802ef.web.app/payment-result?trackingId=${OrderTrackingId}&reference=${OrderMerchantReference}`;
+  
+  res.redirect(frontendUrl);
+});
+
+/* =======================
+   9. TEST PESAPAL CONNECTION
+======================= */
+app.get('/api/pesapal/test-connection', async (req, res) => {
+  try {
+    const urls = getUrls();
+    
+    // Test authentication
+    const authResponse = await axios.post(urls.auth, {
+      consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+      consumer_secret: process.env.PESAPAL_CONSUMER_SECRET
+    });
+
+    res.json({
+      success: true,
+      message: 'Pesapal connection successful',
+      environment: process.env.PESAPAL_ENV,
+      token_received: !!authResponse.data.token,
+      urls: urls
+    });
+  } catch (error) {
+    console.error('❌ Connection test failed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Pesapal connection failed',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/* =======================
+   HEALTH CHECK & TEST
 ======================= */
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'pesapal-proxy',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.PESAPAL_ENV,
+    ipn_id: process.env.PESAPAL_IPN_ID || 'Not configured'
   });
 });
 
@@ -259,5 +474,8 @@ app.post('/api/test', (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Pesapal proxy running on port ${PORT}`);
-  console.log(`🌐 IPN URL: ${process.env.PESAPAL_IPN_URL || 'Not configured'}`);
+  console.log(`🌐 Environment: ${process.env.PESAPAL_ENV || 'sandbox'}`);
+  console.log(`🔗 IPN URL: ${process.env.PESAPAL_IPN_URL || 'Not configured'}`);
+  console.log(`🔑 IPN ID: ${process.env.PESAPAL_IPN_ID || 'Not configured'}`);
+  console.log(`📞 Callback: ${process.env.REACT_APP_PROXY_URL || 'https://pesapalbacked.onrender.com'}/payment-callback`);
 });
