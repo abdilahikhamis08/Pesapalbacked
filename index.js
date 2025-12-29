@@ -23,9 +23,9 @@ app.use(express.urlencoded({ extended: true }));
    PESAPAL CONFIGURATION
 ======================= */
 const PESAPAL_CONFIG = {
-  consumer_key: process.env.PESAPAL_CONSUMER_KEY || 'bWKgRK5iJuIVbt8tUWRcKom69Azwo15X',
-  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET || 'Ow+wTi90/8/XWxNlt7N89PZpx/k=',
-  ipn_id: 'b4b7cb67-2838-4678-97d6-daebcc791391',
+  consumer_key: process.env.PESAPAL_CONSUMER_KEY.
+  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET.
+  ipn_id: process.env.PESAPAL_IPN_ID,
   environment: 'live'
 };
 
@@ -109,7 +109,7 @@ app.post('/api/pesapal/create-payment', async (req, res) => {
       currency: orderData.currency || 'USD',
       amount: orderData.amount || 120, // 10 KES for testing
       description: orderData.description || 'Premium Business Subscription - 1 Year',
-     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
+     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`,
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: orderData.email || 'customer@example.com',
@@ -254,7 +254,7 @@ app.get('/api/pesapal/test', async (req, res) => {
       currency: 'USD',
       amount: 120, // 1 KES for testing
       description: 'Test Payment - Development',
-     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`
+     callback_url: `${process.env.REACT_APP_PROXY_URL}/payment-callback`,
       notification_id: PESAPAL_CONFIG.ipn_id,
       billing_address: {
         email_address: 'test@example.com',
