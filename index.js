@@ -23,8 +23,8 @@ app.use(express.urlencoded({ extended: true }));
    PESAPAL CONFIGURATION
 ======================= */
 const PESAPAL_CONFIG = {
-  consumer_key: process.env.PESAPAL_CONSUMER_KEY.
-  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET.
+  consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+  consumer_secret: process.env.PESAPAL_CONSUMER_SECRET,
   ipn_id: process.env.PESAPAL_IPN_ID,
   environment: 'live'
 };
